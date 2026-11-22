@@ -10,5 +10,7 @@ Available Commands:
 /list_vps    - List OCI instances
 /list_shapes    - List available VM shapes
 /list_images    - List available OS images
+/list_vcns    - List OCI virtual cloud networks
+/list_subnets    - List OCI subnets
 `);
 }
