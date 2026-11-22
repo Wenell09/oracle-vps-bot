@@ -7,5 +7,6 @@ Available Commands:
 /ping  - Check connection
 /id    - Get Telegram user ID
 /oci_test    - test connection OCI
+/list_vps    - List OCI instances
 `);
 }

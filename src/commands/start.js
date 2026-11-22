@@ -12,6 +12,7 @@ Available commands:
 /ping  - Check bot status
 /id    - Show Telegram user ID
 /oci_test    - test connection OCI
+/list_vps    - List OCI instances
 
 Oracle provisioning coming soon.
 `;
