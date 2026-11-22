@@ -7,7 +7,17 @@ if (!secret) {
     throw new Error("TELEGRAM_WEBHOOK_SECRET is required");
 }
 
-export default webhookCallback(bot, "https", {
+const handleUpdate = webhookCallback(bot, "https", {
     secretToken: secret,
     timeoutMilliseconds: 8000,
 });
+
+export default async function handler(req, res) {
+    console.log("[WEBHOOK] Request received:", {
+        method: req.method,
+        contentType: req.headers["content-type"],
+        hasSecret: Boolean(req.headers["x-telegram-bot-api-secret-token"]),
+    });
+
+    return handleUpdate(req, res);
+}

@@ -1,3 +1,4 @@
+
 import "dotenv/config";
 
 import { Bot } from "grammy";
@@ -15,6 +16,18 @@ if (!token) {
 
 export const bot = new Bot(token);
 
+// Update logging
+bot.use(async (ctx, next) => {
+    console.log("[BOT] Update received:", {
+        updateId: ctx.update.update_id,
+        userId: ctx.from?.id,
+        text: ctx.message?.text,
+        chatId: ctx.chat?.id,
+    });
+
+    await next();
+});
+
 // User authorization middleware
 bot.use(async (ctx, next) => {
     const allowedUserId = process.env.ALLOWED_TELEGRAM_USER_ID;
@@ -23,6 +36,8 @@ bot.use(async (ctx, next) => {
         allowedUserId &&
         String(ctx.from?.id) !== String(allowedUserId)
     ) {
+        console.log("[BOT] Unauthorized user:", ctx.from?.id);
+
         await ctx.reply("Unauthorized user.");
         return;
     }
@@ -36,10 +51,13 @@ bot.command("help", helpCommand);
 bot.command("ping", pingCommand);
 bot.command("id", idCommand);
 
-// Command OCI baru
 registerOciTestCommand(bot);
 
 // Error handler
 bot.catch((error) => {
-    console.error("Telegram bot error:", error);
+    console.error("[BOT] Telegram bot error:", {
+        message: error.message,
+        stack: error.stack,
+        error: error.error,
+    });
 });
