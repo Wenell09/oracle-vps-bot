@@ -29,10 +29,13 @@ bot.use(async (ctx, next) => {
         updateId: ctx.update.update_id,
         userId: ctx.from?.id,
         text: ctx.message?.text,
+        entities: ctx.message?.entities,
         chatId: ctx.chat?.id,
     });
-
     await next();
+    console.log("[BOT] Middleware chain completed:", {
+        updateId: ctx.update.update_id,
+    });
 });
 
 // Middleware: User authorization
@@ -61,55 +64,18 @@ bot.command("help", helpCommand);
 bot.command("ping", pingCommand);
 bot.command("id", idCommand);
 
-// OCI test command (temporary direct implementation)
-bot.command("oci-test", async (ctx) => {
-    console.log("[OCI-TEST] Direct handler started");
+bot.hears(/^\/oci-test(?:@\w+)?(?:\s|$)/, async (ctx) => {
+    console.log("[OCI-TEST] HEARS HANDLER MATCHED");
+
     try {
-        await ctx.reply("Sedang menguji koneksi ke Oracle Cloud...");
-        console.log("[OCI-TEST] Starting OCI connection");
-        const result = await testOciConnection();
-        console.log("[OCI-TEST] Connection successful:", {
-            region: result.region,
-            domainsCount: result.availabilityDomains.length,
-        });
-        const domains = result.availabilityDomains
-            .map((item) => `- ${item.name}`)
-            .join("\n");
-        await ctx.reply(
-            [
-                "OCI CONNECTION SUCCESS",
-                "",
-                `Region: ${result.region}`,
-                "Authentication: Successful",
-                "",
-                "Availability Domains:",
-                domains || "Tidak ada Availability Domain ditemukan.",
-            ].join("\n")
-        );
-        console.log("[OCI-TEST] Response sent");
+        await ctx.reply("OCI test handler berhasil dijalankan.");
+
+        console.log("[OCI-TEST] Test reply sent");
     } catch (error) {
-        console.error("[OCI-TEST] Connection failed:", {
+        console.error("[OCI-TEST] Reply failed:", {
             message: error.message,
-            serviceCode: error.serviceCode,
-            statusCode: error.statusCode,
-            requestId: error.opcRequestId,
-            stack: error.stack,
+            description: error.description,
         });
-        try {
-            await ctx.reply(
-                [
-                    "OCI CONNECTION FAILED",
-                    "",
-                    `Error: ${error.serviceCode || error.code || error.message}`,
-                    `HTTP Status: ${error.statusCode || error.status || "-"}`,
-                ].join("\n")
-            );
-        } catch (replyError) {
-            console.error("[OCI-TEST] Telegram reply failed:", {
-                message: replyError.message,
-                description: replyError.description,
-            });
-        }
     }
 });
 
