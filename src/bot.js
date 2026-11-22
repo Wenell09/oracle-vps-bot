@@ -23,6 +23,24 @@ bot.catch((error) => {
     });
 });
 
+bot.use(async (ctx, next) => {
+    console.log("[BOT] Raw message:", {
+        text: ctx.message?.text,
+        entities: ctx.message?.entities,
+        commandEntityText: ctx.message?.entities?.map((entity) => ({
+            type: entity.type,
+            offset: entity.offset,
+            length: entity.length,
+            value: ctx.message.text.substring(
+                entity.offset,
+                entity.offset + entity.length
+            ),
+        })),
+    });
+
+    await next();
+});
+
 // Middleware: Log incoming updates
 bot.use(async (ctx, next) => {
     console.log("[BOT] Update received:", {
