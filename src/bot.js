@@ -1,9 +1,6 @@
-
 import "dotenv/config";
-
 import { Bot } from "grammy";
-
-import { registerOciTestCommand } from "./commands/oci-test.js";
+import { testOciConnection } from "./services/oci/identity.service.js";
 import { startCommand } from "./commands/start.js";
 import { helpCommand } from "./commands/help.js";
 import { pingCommand } from "./commands/ping.js";
@@ -41,44 +38,79 @@ bot.use(async (ctx, next) => {
 // Middleware: User authorization
 bot.use(async (ctx, next) => {
     const allowedUserId = process.env.ALLOWED_TELEGRAM_USER_ID;
-
     const receivedUserId = String(ctx.from?.id ?? "");
-
     const isAuthorized =
         !allowedUserId ||
         receivedUserId === String(allowedUserId).trim();
-
     console.log("[AUTH] Authorization check:", {
         receivedUserId,
-        allowedUserId: allowedUserId ? "CONFIGURED" : "NOT_CONFIGURED",
         isAuthorized,
     });
-
     if (!isAuthorized) {
         console.log("[AUTH] Unauthorized user:", receivedUserId);
-
         await ctx.reply("Unauthorized user.");
         return;
     }
-
     console.log("[AUTH] User authorized:", receivedUserId);
-
     await next();
 });
 
-// Register standard commands
+// Standard commands
 bot.command("start", startCommand);
 bot.command("help", helpCommand);
 bot.command("ping", pingCommand);
 bot.command("id", idCommand);
 
-// Register OCI test command
-registerOciTestCommand(bot);
+// OCI test command (temporary direct implementation)
+bot.command("oci-test", async (ctx) => {
+    console.log("[OCI-TEST] Direct handler started");
+    try {
+        await ctx.reply("Sedang menguji koneksi ke Oracle Cloud...");
+        console.log("[OCI-TEST] Starting OCI connection");
+        const result = await testOciConnection();
+        console.log("[OCI-TEST] Connection successful:", {
+            region: result.region,
+            domainsCount: result.availabilityDomains.length,
+        });
+        const domains = result.availabilityDomains
+            .map((item) => `- ${item.name}`)
+            .join("\n");
+        await ctx.reply(
+            [
+                "OCI CONNECTION SUCCESS",
+                "",
+                `Region: ${result.region}`,
+                "Authentication: Successful",
+                "",
+                "Availability Domains:",
+                domains || "Tidak ada Availability Domain ditemukan.",
+            ].join("\n")
+        );
+        console.log("[OCI-TEST] Response sent");
+    } catch (error) {
+        console.error("[OCI-TEST] Connection failed:", {
+            message: error.message,
+            serviceCode: error.serviceCode,
+            statusCode: error.statusCode,
+            requestId: error.opcRequestId,
+            stack: error.stack,
+        });
+        try {
+            await ctx.reply(
+                [
+                    "OCI CONNECTION FAILED",
+                    "",
+                    `Error: ${error.serviceCode || error.code || error.message}`,
+                    `HTTP Status: ${error.statusCode || error.status || "-"}`,
+                ].join("\n")
+            );
+        } catch (replyError) {
+            console.error("[OCI-TEST] Telegram reply failed:", {
+                message: replyError.message,
+                description: replyError.description,
+            });
+        }
+    }
+});
 
 console.log("[BOT] All commands registered successfully");
-
-// Log command registration execution
-bot.command("oci-test", async (ctx) => {
-    console.log("[OCI-TEST] Fallback handler triggered");
-    await ctx.reply("OCI test command reached fallback handler.");
-});
