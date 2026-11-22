@@ -13,6 +13,8 @@ Available commands:
 /id    - Show Telegram user ID
 /oci_test    - test connection OCI
 /list_vps    - List OCI instances
+/list_shapes    - List available VM shapes
+/list_images    - List available OS images
 
 Oracle provisioning coming soon.
 `;

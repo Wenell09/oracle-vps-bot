@@ -8,6 +8,8 @@ import { pingCommand } from "./commands/ping.js";
 import { idCommand } from "./commands/id.js";
 import { ociTestCommand } from "./commands/oci-test.js";
 import { listVpsCommand } from "./commands/list-vps.js";
+import { listShapesCommand } from "./commands/list-shapes.js";
+import { listImagesCommand } from "./commands/list-images.js";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -65,5 +67,7 @@ bot.command("ping", pingCommand);
 bot.command("id", idCommand);
 bot.command("oci_test", ociTestCommand);
 bot.command("list_vps", listVpsCommand);
+bot.command("list_shapes", listShapesCommand);
+bot.command("list_images", listImagesCommand);
 
 console.log("[BOT] All commands registered successfully");
