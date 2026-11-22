@@ -1,0 +1,14 @@
+{
+  "name": "oracle-vps-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node src/index.js",
+    "webhook:set": "node scripts/set-webhook.js",
+    "webhook:delete": "node scripts/delete-webhook.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "grammy": "^1.36.0"
+  }
+}
