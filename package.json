@@ -5,10 +5,12 @@
   "scripts": {
     "dev": "node src/index.js",
     "webhook:set": "node scripts/set-webhook.js",
-    "webhook:delete": "node scripts/delete-webhook.js"
+    "webhook:delete": "node scripts/delete-webhook.js",
+    "oci:test": "node scripts/test-oci.js"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
-    "grammy": "^1.36.0"
+    "grammy": "^1.36.0",
+    "oci-sdk": "^2.147.0"
   }
 }

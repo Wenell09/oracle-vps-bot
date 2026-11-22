@@ -1,7 +1,7 @@
 import "dotenv/config";
 
 import { Bot } from "grammy";
-
+import { registerOciTestCommand } from "./commands/oci-test.js";
 import { startCommand } from "./commands/start.js";
 import { helpCommand } from "./commands/help.js";
 import { pingCommand } from "./commands/ping.js";
@@ -35,6 +35,9 @@ bot.command("start", startCommand);
 bot.command("help", helpCommand);
 bot.command("ping", pingCommand);
 bot.command("id", idCommand);
+
+// Command OCI baru
+registerOciTestCommand(bot);
 
 // Error handler
 bot.catch((error) => {
