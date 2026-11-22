@@ -17,6 +17,7 @@ Available commands:
 /list_images    - List available OS images
 /list_vcns    - List OCI virtual cloud networks
 /list_subnets    - List OCI subnets
+/network_check    - Check OCI network readiness
 
 Oracle provisioning coming soon.
 `;
