@@ -21,11 +21,22 @@ try {
 
     const result = await bot.api.setWebhook(webhookUrl, {
         secret_token: secret,
-        allowed_updates: ["message"],
+        allowed_updates: [
+            "message",
+            "callback_query",
+        ],
         max_connections: 1,
     });
 
     console.log("Webhook successfully configured:", result);
+
+    const webhookInfo = await bot.api.getWebhookInfo();
+
+    console.log("[WEBHOOK INFO]", {
+        url: webhookInfo.url,
+        allowedUpdates: webhookInfo.allowed_updates,
+        pendingUpdateCount: webhookInfo.pending_update_count,
+    });
 } catch (error) {
     console.error("Failed to configure webhook:", error);
     process.exit(1);
