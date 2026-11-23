@@ -1,65 +1,61 @@
 import { listComputeLimits } from "../services/oci/limits.service.js";
 
-function splitMessage(text, maxLength = 3500) {
-    const sections = text.split("\n\n");
-    const chunks = [];
-    let current = "";
-
-    for (const section of sections) {
-        const next = current ? `${current}\n\n${section}` : section;
-
-        if (next.length > maxLength && current) {
-            chunks.push(current);
-            current = section;
-        } else {
-            current = next;
-        }
-    }
-
-    if (current) {
-        chunks.push(current);
-    }
-
-    return chunks;
-}
+const A1_LIMITS = {
+    "standard-a1-core-count": {
+        label: "A1 OCPU",
+        unit: "OCPU",
+    },
+    "standard-a1-memory-count": {
+        label: "A1 Memory",
+        unit: "GB",
+    },
+};
 
 export async function quotaCheckCommand(ctx) {
-    await ctx.reply("Sedang memeriksa Compute quota OCI...");
+    await ctx.reply("Sedang memeriksa A1 Compute quota OCI...");
 
     try {
         const limits = await listComputeLimits();
 
-        if (!limits.length) {
+        const a1Limits = limits.filter((item =>
+            Object.hasOwn(A1_LIMITS, item.name)
+        ));
+
+        if (a1Limits.length === 0) {
             return ctx.reply(
-                "Tidak ditemukan data Compute limits dari OCI."
+                [
+                    "A1 QUOTA NOT FOUND",
+                    "",
+                    "Limit A1 tidak ditemukan dari OCI API.",
+                    "Periksa scope atau data limit yang dikembalikan OCI.",
+                ].join("\n")
             );
         }
 
         const sections = [
-            "COMPUTE QUOTA REPORT",
-            `Total limit records: ${limits.length}`,
-            ...limits.map((item, index) =>
-                [
-                    `${index + 1}. ${item.name}`,
-                    `Limit: ${item.value ?? "-"}`,
-                    `Used: ${item.used ?? "-"}`,
-                    `Available: ${item.available ?? "-"}`,
+            "A1 COMPUTE QUOTA",
+            `Records found: ${a1Limits.length}`,
+            "",
+            ...a1Limits.map((item) => {
+                const metadata = A1_LIMITS[item.name];
+
+                return [
+                    metadata.label,
+                    `Limit: ${item.value ?? "-"} ${metadata.unit}`,
+                    `Used: ${item.used ?? "-"} ${metadata.unit}`,
+                    `Available: ${item.available ?? "-"} ${metadata.unit}`,
                     `Scope: ${item.scope ?? "-"}`,
                     `Scope Type: ${item.scopeType ?? "-"}`,
-                ].join("\n")
-            ),
+                ].join("\n");
+            }),
         ];
 
-        const chunks = splitMessage(sections.join("\n\n"));
-
-        for (let i = 0; i < chunks.length; i++) {
-            await ctx.reply(chunks[i]);
-        }
+        await ctx.reply(sections.join("\n\n"));
     } catch (error) {
         console.error("[QUOTA CHECK ERROR]", error);
 
         await ctx.reply(
-            `Gagal mengambil Compute quota OCI.\nError: ${error.message}`
+            `Gagal mengambil A1 quota OCI.\nError: ${error.message}`
         );
     }
 }
