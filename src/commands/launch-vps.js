@@ -1,10 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { InlineKeyboard } from "grammy";
+
 import { getVpsConfig } from "../config/vps.js";
 import { launchVps } from "../services/oci/instance.service.js";
 
+import {
+    createProvisioningJob,
+    startInitialProvisioningAttempt,
+    markProvisioningSucceeded,
+} from "../services/database/provisioning.repository.js";
+
+import {
+    handleProvisioningFailure,
+} from "../services/oci/retry.service.js";
+
 function isAuthorized(ctx) {
-    const adminId = process.env.TELEGRAM_ADMIN_ID;
+    const adminId = process.env.ALLOWED_TELEGRAM_USER_ID;
 
     return (
         adminId &&
@@ -26,7 +37,7 @@ export async function launchVpsCommand(ctx) {
             "VPS PROVISIONING PREVIEW",
             "",
             `Name: ${vps.displayName}`,
-            `Region: ap-batam-1`,
+            "Region: ap-batam-1",
             `Availability Domain: ${vps.availabilityDomain}`,
             `Shape: ${vps.shape}`,
             `OCPU: ${vps.ocpus}`,
@@ -84,32 +95,202 @@ export async function confirmLaunchVps(ctx) {
             "Sedang mengirim permintaan provisioning ke OCI...\nMohon jangan tekan tombol berulang kali."
         );
 
-        const instance = await launchVps(token);
+        const vps = getVpsConfig();
 
-        await ctx.reply(
-            [
-                "VPS LAUNCH REQUEST ACCEPTED",
-                "",
-                `Name: ${instance.displayName}`,
-                `Instance OCID: ${instance.id}`,
-                `Shape: ${instance.shape}`,
-                `Status: ${instance.lifecycleState}`,
-                "",
-                "Instance sedang diproses OCI.",
-                "Public IP akan diperiksa setelah instance siap.",
-            ].join("\n")
-        );
+        // Simpan snapshot konfigurasi agar retry konsisten.
+        const config = {
+            compartmentId: vps.compartmentId,
+            availabilityDomain: vps.availabilityDomain,
+            imageId: vps.imageId,
+            subnetId: vps.subnetId,
+            sshPublicKey: vps.sshPublicKey,
+            displayName: vps.displayName,
+            shape: vps.shape,
+            ocpus: vps.ocpus,
+            memoryInGBs: vps.memoryInGBs,
+            bootVolumeSizeInGBs: vps.bootVolumeSizeInGBs,
+        };
+
+        // Buat job terlebih dahulu sebelum memanggil OCI.
+        const result = await createProvisioningJob({
+            telegramUserId: ctx.from.id,
+            telegramChatId: ctx.chat.id,
+            displayName: vps.displayName,
+            shape: vps.shape,
+            availabilityDomain: vps.availabilityDomain,
+            config,
+            retryToken: token,
+            maxAttempts: 20,
+        });
+
+        const job = result.job;
+
+        if (!job) {
+            throw new Error("Gagal menyimpan provisioning job.");
+        }
+
+        // Callback yang sama tidak boleh meluncurkan instance dua kali.
+        if (!result.created) {
+            await ctx.reply(
+                [
+                    "PROVISIONING REQUEST ALREADY EXISTS",
+                    "",
+                    `Job ID: ${job.id}`,
+                    `Status: ${job.status}`,
+                    `Attempt: ${job.attempt_count}/${job.max_attempts}`,
+                    "",
+                    "Permintaan ini sudah pernah diproses.",
+                ].join("\n")
+            );
+            return;
+        }
+
+        // Catat percobaan pertama.
+        const attemptedJob = await startInitialProvisioningAttempt(job.id);
+
+        if (!attemptedJob) {
+            throw new Error("Gagal mencatat percobaan provisioning pertama.");
+        }
+
+        try {
+            let instance;
+
+            try {
+                instance = await launchVps(
+                    token,
+                    attemptedJob.config
+                );
+            } catch (error) {
+                console.error("[OCI LAUNCH ERROR]", error);
+
+                const result = await handleProvisioningFailure(
+                    attemptedJob,
+                    error
+                );
+
+                if (result.retryScheduled) {
+                    await ctx.reply(
+                        [
+                            "VPS PROVISIONING RETRY SCHEDULED",
+                            "",
+                            `Job ID: ${job.id}`,
+                            `Status: ${result.status}`,
+                            `Attempt: ${result.attemptCount}/${result.maxAttempts}`,
+                            `Next retry: ${new Date(result.nextRetryAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}`,
+                            `Retry interval: ${result.delayMinutes} menit`,
+                            "",
+                            `Error: ${error.message}`,
+                            "",
+                            "Sistem akan mencoba kembali sesuai jadwal.",
+                        ].join("\n")
+                    );
+                } else {
+                    await ctx.reply(
+                        [
+                            "VPS PROVISIONING FAILED",
+                            "",
+                            `Job ID: ${job.id}`,
+                            `Status: ${result.status}`,
+                            `Reason: ${result.reason}`,
+                            `Error: ${error.message}`,
+                            "",
+                            "Tidak ada retry otomatis untuk error ini.",
+                        ].join("\n")
+                    );
+                }
+
+                return;
+            }
+
+            // Bagian ini hanya dijalankan jika OCI mengembalikan instance.
+            const updatedJob = await markProvisioningSucceeded(job.id, {
+                instanceId: instance.id,
+                instanceState: instance.lifecycleState,
+            });
+
+            if (!updatedJob) {
+                console.error(
+                    "[DATABASE] Instance created but provisioning status was not updated.",
+                    { jobId: job.id, instanceId: instance.id }
+                );
+
+                await ctx.reply(
+                    [
+                        "VPS CREATED - DATABASE UPDATE FAILED",
+                        "",
+                        `Job ID: ${job.id}`,
+                        `Instance OCID: ${instance.id}`,
+                        "",
+                        "Instance berhasil dibuat oleh OCI, tetapi status database gagal diperbarui.",
+                        "Jangan melakukan launch ulang. Periksa OCI Console.",
+                    ].join("\n")
+                );
+
+                return;
+            }
+
+            await ctx.reply(
+                [
+                    "VPS LAUNCH SUCCESS",
+                    "",
+                    `Job ID: ${job.id}`,
+                    `Name: ${instance.displayName}`,
+                    `Instance OCID: ${instance.id}`,
+                    `Shape: ${instance.shape}`,
+                    `Status: ${instance.lifecycleState}`,
+                    "",
+                    "Instance berhasil dikirim ke OCI.",
+                ].join("\n")
+            );
+        } catch (error) {
+            console.error("[OCI LAUNCH ERROR]", error);
+
+            const result = await handleProvisioningFailure(
+                attemptedJob,
+                error
+            );
+
+            if (result.retryScheduled) {
+                await ctx.reply(
+                    [
+                        "VPS PROVISIONING RETRY SCHEDULED",
+                        "",
+                        `Job ID: ${job.id}`,
+                        `Status: ${result.status}`,
+                        `Attempt: ${result.attemptCount}/${result.maxAttempts}`,
+                        `Next retry: ${new Date(result.nextRetryAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}`,
+                        `Retry interval: ${result.delayMinutes} menit`,
+                        "",
+                        `Error: ${error.message}`,
+                        "",
+                        "Sistem akan mencoba kembali sesuai jadwal.",
+                    ].join("\n")
+                );
+            } else {
+                await ctx.reply(
+                    [
+                        "VPS PROVISIONING FAILED",
+                        "",
+                        `Job ID: ${job.id}`,
+                        `Status: ${result.status}`,
+                        `Reason: ${result.reason}`,
+                        `Error: ${error.message}`,
+                        "",
+                        "Tidak ada retry otomatis untuk error ini.",
+                    ].join("\n")
+                );
+            }
+        }
     } catch (error) {
-        console.error("[LAUNCH VPS ERROR]", error);
+        console.error("[PROVISIONING ERROR]", error);
 
         await ctx.reply(
             [
-                "VPS LAUNCH FAILED",
+                "PROVISIONING PROCESS ERROR",
                 "",
                 `Error: ${error.message}`,
                 "",
-                "Belum ada konfirmasi bahwa instance berhasil dibuat.",
-                "Periksa daftar instance OCI sebelum mencoba kembali.",
+                "Periksa database dan daftar instance OCI sebelum mencoba kembali.",
             ].join("\n")
         );
     }
@@ -127,5 +308,7 @@ export async function cancelLaunchVps(ctx) {
         text: "Provisioning dibatalkan.",
     });
 
-    await ctx.editMessageText("VPS provisioning dibatalkan. Tidak ada permintaan launch yang dikirim.");
+    await ctx.editMessageText(
+        "VPS provisioning dibatalkan. Tidak ada permintaan launch yang dikirim."
+    );
 }

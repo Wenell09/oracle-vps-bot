@@ -1,12 +1,14 @@
 import { createComputeClient } from "./oci-client.js";
 import { getVpsConfig } from "../../config/vps.js";
 
-export async function launchVps(opcRetryToken) {
+export async function launchVps(opcRetryToken, configOverride = null) {
     if (!opcRetryToken) {
         throw new Error("Provisioning retry token wajib diisi.");
     }
 
-    const vps = getVpsConfig();
+    // Gunakan snapshot konfigurasi job ketika retry.
+    const vps = configOverride ?? getVpsConfig();
+
     const { computeClient } = createComputeClient();
 
     try {
@@ -42,6 +44,12 @@ export async function launchVps(opcRetryToken) {
         });
 
         const instance = response.instance ?? response.data;
+
+        if (!instance?.id) {
+            throw new Error(
+                "OCI tidak mengembalikan instance OCID. Status provisioning belum dapat dipastikan."
+            );
+        }
 
         return {
             id: instance.id,

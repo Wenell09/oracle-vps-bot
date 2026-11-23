@@ -6,11 +6,18 @@
     "dev": "node src/index.js",
     "webhook:set": "node scripts/set-webhook.js",
     "webhook:delete": "node scripts/delete-webhook.js",
-    "oci:test": "node scripts/test-oci.js"
+    "oci:test": "node scripts/test-oci.js",
+    "db:test": "node scripts/test-database.js",
+    "db:migrate": "node scripts/migrate.js"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.1",
     "dotenv": "^16.4.7",
     "grammy": "^1.36.0",
-    "oci-sdk": "^2.147.0"
+    "oci-sdk": "^2.147.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
   }
 }
