@@ -16,10 +16,7 @@ function extractErrorCode(error) {
 }
 
 function extractErrorMessage(error) {
-    return (
-        error?.message ??
-        "Unknown provisioning error"
-    );
+    return error?.message ?? "Unknown provisioning error";
 }
 
 export function isRetryableProvisioningError(error) {
@@ -41,15 +38,46 @@ function getRetryDelayMinutes(attemptCount) {
     ];
 }
 
-export async function handleProvisioningFailure(job, error) {
+async function failProvisioningJob(
+    job,
+    errorCode,
+    errorMessage,
+    workerId
+) {
+    const updatedJob = await markProvisioningFailed(
+        job.id,
+        {
+            errorCode,
+            errorMessage,
+        },
+        workerId
+    );
+
+    if (!updatedJob) {
+        throw new Error(
+            `Unable to mark provisioning job ${job.id} as FAILED. Lock may have expired.`
+        );
+    }
+
+    return updatedJob;
+}
+
+export async function handleProvisioningFailure(
+    job,
+    error,
+    { workerId = null } = {}
+) {
     const errorCode = String(extractErrorCode(error));
     const errorMessage = extractErrorMessage(error);
 
+    // Error yang tidak dapat di-retry.
     if (!isRetryableProvisioningError(error)) {
-        await markProvisioningFailed(job.id, {
+        await failProvisioningJob(
+            job,
             errorCode,
             errorMessage,
-        });
+            workerId
+        );
 
         return {
             status: "FAILED",
@@ -58,11 +86,14 @@ export async function handleProvisioningFailure(job, error) {
         };
     }
 
+    // Batas maksimal percobaan.
     if (job.attempt_count >= job.max_attempts) {
-        await markProvisioningFailed(job.id, {
+        await failProvisioningJob(
+            job,
             errorCode,
-            errorMessage: `Maximum attempts reached. Last error: ${errorMessage}`,
-        });
+            `Maximum attempts reached. Last error: ${errorMessage}`,
+            workerId
+        );
 
         return {
             status: "FAILED",
@@ -71,20 +102,26 @@ export async function handleProvisioningFailure(job, error) {
         };
     }
 
+    // Jadwalkan percobaan berikutnya.
     const delayMinutes = getRetryDelayMinutes(job.attempt_count);
+
     const nextRetryAt = new Date(
         Date.now() + delayMinutes * 60 * 1000
     );
 
-    const updatedJob = await scheduleProvisioningRetry(job.id, {
-        nextRetryAt,
-        errorCode,
-        errorMessage,
-    });
+    const updatedJob = await scheduleProvisioningRetry(
+        job.id,
+        {
+            nextRetryAt,
+            errorCode,
+            errorMessage,
+        },
+        workerId
+    );
 
     if (!updatedJob) {
         throw new Error(
-            `Unable to schedule retry for provisioning job ${job.id}`
+            `Unable to schedule retry for provisioning job ${job.id}. Lock may have expired.`
         );
     }
 
