@@ -19,8 +19,8 @@ Available commands:
 /list_subnets    - List OCI subnets
 /network_check    - Check OCI network readiness
 /quota_check - check compute quota
+/launch_vps - Create VPS
 
-Oracle provisioning coming soon.
 `;
 
     await ctx.reply(message);

@@ -14,6 +14,11 @@ import { listVcnsCommand } from "./commands/list-vcns.js";
 import { listSubnetsCommand } from "./commands/list-subnets.js";
 import { networkCheckCommand } from "./commands/network-check.js";
 import { quotaCheckCommand } from "./commands/quota-check.js";
+import {
+    launchVpsCommand,
+    confirmLaunchVps,
+    cancelLaunchVps,
+} from "./commands/launch-vps.js";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -77,5 +82,9 @@ bot.command("list_vcns", listVcnsCommand);
 bot.command("list_subnets", listSubnetsCommand);
 bot.command("network_check", networkCheckCommand);
 bot.command("quota_check", quotaCheckCommand);
+bot.command("launch_vps", launchVpsCommand);
+
+bot.callbackQuery(/^launch_vps:(.+)$/, confirmLaunchVps);
+bot.callbackQuery(/^cancel_vps:(.+)$/, cancelLaunchVps);
 
 console.log("[BOT] All commands registered successfully");
