@@ -13,6 +13,7 @@ import { listImagesCommand } from "./commands/list-images.js";
 import { listVcnsCommand } from "./commands/list-vcns.js";
 import { listSubnetsCommand } from "./commands/list-subnets.js";
 import { networkCheckCommand } from "./commands/network-check.js";
+import { quotaCheckCommand } from "./commands/quota-check.js";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -75,5 +76,6 @@ bot.command("list_images", listImagesCommand);
 bot.command("list_vcns", listVcnsCommand);
 bot.command("list_subnets", listSubnetsCommand);
 bot.command("network_check", networkCheckCommand);
+bot.command("quota_check", quotaCheckCommand);
 
 console.log("[BOT] All commands registered successfully");

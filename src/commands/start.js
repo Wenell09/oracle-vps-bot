@@ -18,6 +18,7 @@ Available commands:
 /list_vcns    - List OCI virtual cloud networks
 /list_subnets    - List OCI subnets
 /network_check    - Check OCI network readiness
+/quota_check - check compute quota
 
 Oracle provisioning coming soon.
 `;

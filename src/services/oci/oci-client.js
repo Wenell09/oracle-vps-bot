@@ -41,3 +41,16 @@ export function createComputeClient() {
         config,
     };
 }
+
+export function createLimitsClient() {
+    const config = getOciConfig();
+    const provider = createOciAuthenticationProvider(config);
+
+    const limitsClient = new oci.limits.LimitsClient({
+        authenticationDetailsProvider: provider,
+    });
+
+    limitsClient.region = oci.common.Region.fromRegionId(config.region);
+
+    return { limitsClient, config };
+}
