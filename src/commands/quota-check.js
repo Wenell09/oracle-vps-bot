@@ -1,5 +1,28 @@
 import { listComputeLimits } from "../services/oci/limits.service.js";
 
+function splitMessage(text, maxLength = 3500) {
+    const sections = text.split("\n\n");
+    const chunks = [];
+    let current = "";
+
+    for (const section of sections) {
+        const next = current ? `${current}\n\n${section}` : section;
+
+        if (next.length > maxLength && current) {
+            chunks.push(current);
+            current = section;
+        } else {
+            current = next;
+        }
+    }
+
+    if (current) {
+        chunks.push(current);
+    }
+
+    return chunks;
+}
+
 export async function quotaCheckCommand(ctx) {
     await ctx.reply("Sedang memeriksa Compute quota OCI...");
 
@@ -12,10 +35,9 @@ export async function quotaCheckCommand(ctx) {
             );
         }
 
-        const message = [
+        const sections = [
             "COMPUTE QUOTA REPORT",
             `Total limit records: ${limits.length}`,
-            "",
             ...limits.map((item, index) =>
                 [
                     `${index + 1}. ${item.name}`,
@@ -26,9 +48,13 @@ export async function quotaCheckCommand(ctx) {
                     `Scope Type: ${item.scopeType ?? "-"}`,
                 ].join("\n")
             ),
-        ].join("\n\n");
+        ];
 
-        await ctx.reply(message);
+        const chunks = splitMessage(sections.join("\n\n"));
+
+        for (let i = 0; i < chunks.length; i++) {
+            await ctx.reply(chunks[i]);
+        }
     } catch (error) {
         console.error("[QUOTA CHECK ERROR]", error);
 
