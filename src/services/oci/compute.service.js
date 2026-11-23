@@ -62,22 +62,41 @@ export async function listShapes() {
 /**
  * Get available OS images in the configured compartment.
  */
-export async function listImages() {
+export async function listImages({
+    operatingSystem = "Canonical Ubuntu",
+    operatingSystemVersion = "24.04",
+    shape = "VM.Standard.A1.Flex",
+} = {}) {
     const { computeClient, config } = createComputeClient();
     const compartmentId = getCompartmentId(config);
 
-    try {
-        const response = await computeClient.listImages({
-            compartmentId,
-        });
+    const images = [];
+    let page;
 
-        return response.items.map((image) => ({
+    try {
+        do {
+            const response = await computeClient.listImages({
+                compartmentId,
+                operatingSystem,
+                operatingSystemVersion,
+                shape,
+                page,
+            });
+
+            images.push(...response.items);
+
+            page = response.opcNextPage;
+        } while (page);
+
+        return images.map((image) => ({
             id: image.id,
             displayName: image.displayName,
             operatingSystem: image.operatingSystem,
             operatingSystemVersion: image.operatingSystemVersion,
             lifecycleState: image.lifecycleState,
             sizeInMBs: image.sizeInMBs,
+            timeCreated: image.timeCreated,
+            launchMode: image.launchMode,
         }));
     } finally {
         if (typeof computeClient.close === "function") {

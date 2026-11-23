@@ -1,74 +1,49 @@
 import { listImages } from "../services/oci/compute.service.js";
 
 export async function listImagesCommand(ctx) {
-    console.log("[LIST-IMAGES] Handler started");
+    await ctx.reply(
+        "Sedang mencari Ubuntu image yang kompatibel dengan VM.Standard.A1.Flex..."
+    );
 
     try {
-        await ctx.reply("Sedang mengambil daftar OS images dari OCI...");
-
         const images = await listImages();
 
-        if (!images.length) {
-            await ctx.reply("Tidak ada OS images ditemukan.");
-            return;
+        if (images.length === 0) {
+            return ctx.reply(
+                "Tidak ditemukan Ubuntu 24.04 image untuk shape VM.Standard.A1.Flex."
+            );
         }
 
         const activeImages = images.filter(
             (image) => image.lifecycleState === "AVAILABLE"
         );
 
-        const limit = 8;
-        const selectedImages = activeImages.slice(0, limit);
+        const displayedImages = activeImages.slice(0, 10);
 
-        if (!selectedImages.length) {
-            await ctx.reply("Tidak ditemukan OS image dengan status AVAILABLE.");
-            return;
-        }
+        const message = [
+            "UBUNTU IMAGES",
+            `Total image tersedia: ${activeImages.length}`,
+            `Ditampilkan: ${displayedImages.length}`,
+            "",
+            ...displayedImages.map(
+                (image, index) =>
+                    [
+                        `${index + 1}. ${image.displayName}`,
+                        `OS: ${image.operatingSystem} ${image.operatingSystemVersion}`,
+                        `State: ${image.lifecycleState}`,
+                        `Size: ${image.sizeInMBs ?? "-"} MB`,
+                        `Launch Mode: ${image.launchMode ?? "-"}`,
+                        `Image OCID: ${image.id}`,
+                    ].join("\n")
+            ),
+        ].join("\n\n");
 
-        const output = selectedImages.map((image, index) => {
-            return [
-                `${index + 1}. ${image.displayName}`,
-                `OS: ${image.operatingSystem || "-"}`,
-                `Version: ${image.operatingSystemVersion || "-"}`,
-                `Size: ${image.sizeInMBs ?? "-"} MB`,
-                `State: ${image.lifecycleState}`,
-                "",
-                `Image OCID:`,
-                image.id,
-            ].join("\n");
-        });
-
-        await ctx.reply(
-            [
-                "AVAILABLE OS IMAGES",
-                "",
-                `Total image aktif: ${activeImages.length}`,
-                `Ditampilkan: ${selectedImages.length}`,
-                "",
-                ...output.flatMap((item) => [item, ""]),
-            ].join("\n")
-        );
-
-        console.log("[LIST-IMAGES] Success:", {
-            total: images.length,
-            active: activeImages.length,
-            displayed: selectedImages.length,
-        });
+        await ctx.reply(message);
     } catch (error) {
-        console.error("[LIST-IMAGES] Failed:", {
-            message: error.message,
-            serviceCode: error.serviceCode,
-            statusCode: error.statusCode,
-            requestId: error.opcRequestId,
-        });
+        console.error("[LIST IMAGES ERROR]", error);
 
         await ctx.reply(
-            [
-                "FAILED TO FETCH OS IMAGES",
-                "",
-                `Error: ${error.serviceCode || error.code || error.message}`,
-                `HTTP Status: ${error.statusCode || error.status || "-"}`,
-            ].join("\n")
+            `Gagal mengambil Ubuntu image OCI.\nError: ${error.message}`
         );
     }
 }
