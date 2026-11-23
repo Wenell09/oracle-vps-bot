@@ -157,8 +157,9 @@ export async function confirmLaunchVps(ctx) {
 
             try {
                 instance = await launchVps(
-                    token,
-                    attemptedJob.config
+                    job.retry_token,
+                    job.config,
+                    job.id
                 );
             } catch (error) {
                 console.error("[OCI LAUNCH ERROR]", error);

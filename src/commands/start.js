@@ -20,6 +20,9 @@ Available commands:
 /network_check    - Check OCI network readiness
 /quota_check - check compute quota
 /launch_vps - Create VPS
+/retry_status - Show latest provisioning status
+/retry_list - List active provisioning jobs
+/cancel_retry - Cancel a provisioning retry
 
 `;
 

@@ -1,7 +1,5 @@
 import "./config/env.js";
-
 import { Bot } from "grammy";
-
 import { startCommand } from "./commands/start.js";
 import { helpCommand } from "./commands/help.js";
 import { pingCommand } from "./commands/ping.js";
@@ -19,6 +17,9 @@ import {
     confirmLaunchVps,
     cancelLaunchVps,
 } from "./commands/launch-vps.js";
+import {
+    registerRetryManagementCommands,
+} from "./commands/retry-management.js";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -28,24 +29,22 @@ if (!token) {
 
 export const bot = new Bot(token);
 
-// Error handler
 bot.catch((error) => {
     console.error("[BOT] Error:", error);
 });
 
-// Logging middleware
 bot.use(async (ctx, next) => {
     console.log("[BOT] Update received:", {
         updateId: ctx.update.update_id,
         userId: ctx.from?.id,
         text: ctx.message?.text,
         chatId: ctx.chat?.id,
+        callbackData: ctx.callbackQuery?.data,
     });
 
     await next();
 });
 
-// Authorization middleware
 bot.use(async (ctx, next) => {
     const allowedUserId = process.env.ALLOWED_TELEGRAM_USER_ID;
     const receivedUserId = String(ctx.from?.id ?? "");
@@ -56,20 +55,30 @@ bot.use(async (ctx, next) => {
 
     console.log("[AUTH] Authorization check:", {
         receivedUserId,
-        allowedUserId: allowedUserId ? "CONFIGURED" : "NOT_CONFIGURED",
+        allowedUserId: allowedUserId
+            ? "CONFIGURED"
+            : "NOT_CONFIGURED",
         isAuthorized,
     });
 
     if (!isAuthorized) {
         console.log("[AUTH] Unauthorized user:", receivedUserId);
-        await ctx.reply("Unauthorized user.");
+
+        if (ctx.callbackQuery) {
+            await ctx.answerCallbackQuery({
+                text: "Unauthorized user.",
+                show_alert: true,
+            });
+        } else {
+            await ctx.reply("Unauthorized user.");
+        }
+
         return;
     }
 
     await next();
 });
 
-// Command registration
 bot.command("start", startCommand);
 bot.command("help", helpCommand);
 bot.command("ping", pingCommand);
@@ -86,5 +95,7 @@ bot.command("launch_vps", launchVpsCommand);
 
 bot.callbackQuery(/^launch_vps:(.+)$/, confirmLaunchVps);
 bot.callbackQuery(/^cancel_vps:(.+)$/, cancelLaunchVps);
+
+registerRetryManagementCommands(bot);
 
 console.log("[BOT] All commands registered successfully");
