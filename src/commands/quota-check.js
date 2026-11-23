@@ -1,13 +1,15 @@
-import { listComputeLimits } from "../services/oci/limits.service.js";
+import { getA1QuotaAvailability } from "../services/oci/limits.service.js";
 
 const A1_LIMITS = {
     "standard-a1-core-count": {
         label: "A1 OCPU",
         unit: "OCPU",
+        required: 1,
     },
     "standard-a1-memory-count": {
         label: "A1 Memory",
         unit: "GB",
+        required: 6,
     },
 };
 
@@ -15,47 +17,37 @@ export async function quotaCheckCommand(ctx) {
     await ctx.reply("Sedang memeriksa A1 Compute quota OCI...");
 
     try {
-        const limits = await listComputeLimits();
-
-        const a1Limits = limits.filter((item =>
-            Object.hasOwn(A1_LIMITS, item.name)
-        ));
-
-        if (a1Limits.length === 0) {
-            return ctx.reply(
-                [
-                    "A1 QUOTA NOT FOUND",
-                    "",
-                    "Limit A1 tidak ditemukan dari OCI API.",
-                    "Periksa scope atau data limit yang dikembalikan OCI.",
-                ].join("\n")
-            );
-        }
+        const results = await getA1QuotaAvailability();
 
         const sections = [
             "A1 COMPUTE QUOTA",
-            `Records found: ${a1Limits.length}`,
             "",
-            ...a1Limits.map((item) => {
-                const metadata = A1_LIMITS[item.name];
-
-                return [
-                    metadata.label,
-                    `Limit: ${item.value ?? "-"} ${metadata.unit}`,
-                    `Used: ${item.used ?? "-"} ${metadata.unit}`,
-                    `Available: ${item.available ?? "-"} ${metadata.unit}`,
-                    `Scope: ${item.scope ?? "-"}`,
-                    `Scope Type: ${item.scopeType ?? "-"}`,
-                ].join("\n");
-            }),
         ];
+
+        for (const result of results) {
+            const metadata = A1_LIMITS[result.name];
+
+            if (!metadata) continue;
+
+            sections.push(
+                [
+                    metadata.label,
+                    `Required: ${metadata.required} ${metadata.unit}`,
+                    `Limit: ${result.limit ?? "-"}`,
+                    `Used: ${result.used ?? "-"}`,
+                    `Available: ${result.available ?? "-"}`,
+                    `AD: ${result.availabilityDomain ?? "-"}`,
+                    `Status: ${result.status}`,
+                ].join("\n")
+            );
+        }
 
         await ctx.reply(sections.join("\n\n"));
     } catch (error) {
         console.error("[QUOTA CHECK ERROR]", error);
 
         await ctx.reply(
-            `Gagal mengambil A1 quota OCI.\nError: ${error.message}`
+            `Gagal memeriksa A1 quota.\nError: ${error.message}`
         );
     }
 }
