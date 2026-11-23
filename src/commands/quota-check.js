@@ -21,24 +21,24 @@ export async function quotaCheckCommand(ctx) {
 
         const sections = [
             "A1 COMPUTE QUOTA",
-            "",
+            `Records found: ${results.length}`,
         ];
 
         for (const result of results) {
             const metadata = A1_LIMITS[result.name];
 
-            if (!metadata) continue;
-
             sections.push(
                 [
-                    metadata.label,
-                    `Required: ${metadata.required} ${metadata.unit}`,
+                    metadata?.label ?? result.name,
+                    `Required: ${metadata?.required ?? "-"} ${metadata?.unit ?? ""}`,
                     `Limit: ${result.limit ?? "-"}`,
                     `Used: ${result.used ?? "-"}`,
                     `Available: ${result.available ?? "-"}`,
+                    `Scope: ${result.scopeType ?? "-"}`,
                     `AD: ${result.availabilityDomain ?? "-"}`,
                     `Status: ${result.status}`,
-                ].join("\n")
+                    result.error ? `Error: ${result.error}` : "",
+                ].filter(Boolean).join("\n")
             );
         }
 
@@ -47,7 +47,7 @@ export async function quotaCheckCommand(ctx) {
         console.error("[QUOTA CHECK ERROR]", error);
 
         await ctx.reply(
-            `Gagal memeriksa A1 quota.\nError: ${error.message}`
+            `Gagal memeriksa A1 quota OCI.\nError: ${error.message}`
         );
     }
 }

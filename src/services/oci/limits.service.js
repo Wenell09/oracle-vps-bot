@@ -13,32 +13,81 @@ export async function getA1QuotaAvailability() {
         config.tenancyOCID;
 
     try {
-        // Ambil metadata limit A1
-        const response = await limitsClient.listLimitValues({
-            compartmentId,
-            serviceName: "compute",
-        });
+        const limits = [];
+        let page;
 
-        const a1Limits = (response.items ?? []).filter((item) =>
+        // Ambil seluruh halaman limit
+        do {
+            const response = await limitsClient.listLimitValues({
+                compartmentId,
+                serviceName: "compute",
+                page,
+            });
+
+            limits.push(...(response.items ?? []));
+            page = response.opcNextPage;
+        } while (page);
+
+        const a1Limits = limits.filter((item) =>
             A1_LIMIT_NAMES.includes(item.name)
         );
 
-        if (!a1Limits.length) {
-            throw new Error("A1 quota tidak ditemukan.");
+        console.log("[A1 LIMIT DISCOVERY]", JSON.stringify(
+            a1Limits.map((item) => ({
+                name: item.name,
+                value: item.value,
+                scopeType: item.scopeType,
+                availabilityDomain: item.availabilityDomain,
+            })),
+            null,
+            2
+        ));
+
+        if (a1Limits.length === 0) {
+            // Tampilkan nama limit yang mengandung A1 untuk diagnosis
+            const candidates = limits
+                .filter((item) => item.name?.toLowerCase().includes("a1"))
+                .map((item) => ({
+                    name: item.name,
+                    value: item.value,
+                    scopeType: item.scopeType,
+                    availabilityDomain: item.availabilityDomain,
+                }));
+
+            console.log("[A1 LIMIT CANDIDATES]", candidates);
+
+            throw new Error(
+                `A1 quota tidak ditemukan. Total limits: ${limits.length}. ` +
+                `A1 candidates: ${JSON.stringify(candidates)}`
+            );
         }
 
         const results = await Promise.all(
             a1Limits.map(async (limit) => {
+                if (
+                    limit.scopeType === "AD" &&
+                    !limit.availabilityDomain
+                ) {
+                    return {
+                        name: limit.name,
+                        limit: limit.value,
+                        scopeType: limit.scopeType,
+                        status: "MISSING_AVAILABILITY_DOMAIN",
+                    };
+                }
+
                 try {
-                    const availabilityResponse =
+                    const response =
                         await limitsClient.getResourceAvailability({
                             compartmentId,
                             serviceName: "compute",
                             limitName: limit.name,
-                            availabilityDomain: limit.availabilityDomain,
+                            ...(limit.scopeType === "AD"
+                                ? { availabilityDomain: limit.availabilityDomain }
+                                : {}),
                         });
 
-                    const availability = availabilityResponse.resourceAvailability;
+                    const availability = response.resourceAvailability;
 
                     return {
                         name: limit.name,
@@ -49,11 +98,11 @@ export async function getA1QuotaAvailability() {
                         available: availability?.available,
                         fractionalUsed: availability?.fractionalUsed,
                         fractionalAvailable: availability?.fractionalAvailable,
-                        status: "AVAILABLE",
+                        status: "SUCCESS",
                     };
                 } catch (error) {
                     console.error(
-                        `[A1 QUOTA AVAILABILITY ERROR] ${limit.name}`,
+                        `[A1 AVAILABILITY ERROR] ${limit.name}`,
                         error
                     );
 
@@ -62,7 +111,7 @@ export async function getA1QuotaAvailability() {
                         limit: limit.value,
                         scopeType: limit.scopeType,
                         availabilityDomain: limit.availabilityDomain,
-                        status: "UNAVAILABLE_TO_QUERY",
+                        status: "QUERY_FAILED",
                         error: error.message,
                     };
                 }
