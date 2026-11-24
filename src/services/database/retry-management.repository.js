@@ -1,4 +1,3 @@
-
 import { db } from "../../config/database.js";
 
 /**
@@ -19,17 +18,17 @@ export async function listActiveProvisioningJobs(telegramUserId, limit = 10) {
             error_message,
             instance_id,
             instance_state,
+            public_ip,
             created_at,
             updated_at
         FROM provisioning_jobs
         WHERE telegram_user_id = $1
-            AND status IN ('PENDING', 'RETRYING')
+            AND status IN ('PENDING', 'PROCESSING', 'RETRYING')
         ORDER BY created_at DESC
         LIMIT $2
     `;
 
     const result = await db.query(query, [telegramUserId, limit]);
-
     return result.rows;
 }
 
@@ -51,6 +50,7 @@ export async function findLatestProvisioningJob(telegramUserId) {
             error_message,
             instance_id,
             instance_state,
+            public_ip,
             created_at,
             updated_at,
             completed_at
@@ -61,15 +61,14 @@ export async function findLatestProvisioningJob(telegramUserId) {
     `;
 
     const result = await db.query(query, [telegramUserId]);
-
     return result.rows[0] ?? null;
 }
 
 /**
- * Membatalkan job aktif yang belum di-claim worker.
+ * Membatalkan job aktif yang belum di-claim worker atau yang lock-nya expired.
  *
  * User hanya dapat membatalkan job miliknya.
- * Job yang sudah dikunci worker tidak dapat dibatalkan.
+ * Job yang sedang aktif dikunci worker tidak dapat dibatalkan.
  */
 export async function cancelRetryJobByUser(jobId, telegramUserId) {
     const query = `
@@ -84,7 +83,7 @@ export async function cancelRetryJobByUser(jobId, telegramUserId) {
         WHERE id = $1
             AND telegram_user_id = $2
             AND status IN ('PENDING', 'RETRYING')
-            AND locked_by IS NULL
+            AND (locked_by IS NULL OR locked_until < NOW())
         RETURNING
             id,
             display_name,
@@ -95,6 +94,5 @@ export async function cancelRetryJobByUser(jobId, telegramUserId) {
     `;
 
     const result = await db.query(query, [jobId, telegramUserId]);
-
     return result.rows[0] ?? null;
 }

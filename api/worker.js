@@ -1,21 +1,21 @@
-
 import { randomUUID } from "node:crypto";
-
 import {
     claimDueProvisioningJobs,
     markProvisioningSucceeded,
     failExhaustedProvisioningJobs,
 } from "../src/services/database/provisioning.repository.js";
-
 import {
     launchVps,
     findInstanceByProvisioningJobId,
 } from "../src/services/oci/instance.service.js";
-
 import { handleProvisioningFailure } from "../src/services/oci/retry.service.js";
+import {
+    notifyProvisioningSuccess,
+    notifyProvisioningFailure,
+    recoverUnnotifiedJobs,
+} from "../src/services/telegram/notification.service.js";
 
 export default async function handler(req, res) {
-    // Worker hanya menerima POST.
     if (req.method !== "POST") {
         return res.status(405).json({
             success: false,
@@ -23,7 +23,6 @@ export default async function handler(req, res) {
         });
     }
 
-    // Autentikasi worker.
     const workerSecret = process.env.WORKER_SECRET;
     const authorization = req.headers.authorization;
 
@@ -37,19 +36,29 @@ export default async function handler(req, res) {
     const workerId = `worker-${randomUUID()}`;
 
     try {
-        console.log("[WORKER] Starting:", workerId);
-
-        // 1. Fail job yang sudah habis attempt dan lock expired.
         const exhaustedJobs = await failExhaustedProvisioningJobs();
 
         if (exhaustedJobs.length > 0) {
-            console.log(
-                "[WORKER] Failed exhausted jobs:",
-                exhaustedJobs.map((job) => job.id)
-            );
+            console.log("[WORKER] Failed exhausted jobs:", {
+                jobIds: exhaustedJobs.map((job) => job.id),
+            });
+
+            // Notify users about exhausted attempts
+            for (const exhaustedJob of exhaustedJobs) {
+                notifyProvisioningFailure(exhaustedJob, {
+                    reason: "MAX_ATTEMPTS_REACHED",
+                    errorMessage: "Batas maksimal percobaan telah tercapai tanpa hasil berhasil.",
+                }).catch((err) =>
+                    console.error("[WORKER] Failed to notify exhausted job:", err.message)
+                );
+            }
         }
 
-        // 2. Claim satu job retry yang sudah jatuh tempo.
+        // Recover any unnotified succeeded jobs
+        recoverUnnotifiedJobs().catch((err) =>
+            console.error("[WORKER] Failed to run notification recovery:", err.message)
+        );
+
         const jobs = await claimDueProvisioningJobs(workerId, 1);
 
         if (!jobs.length) {
@@ -62,129 +71,102 @@ export default async function handler(req, res) {
 
         const job = jobs[0];
 
-        console.log("[WORKER] Claimed job:", {
+        console.log("[WORKER] Processing job:", {
             jobId: job.id,
             attempt: job.attempt_count,
             maxAttempts: job.max_attempts,
             workerId,
         });
 
-        // 3. RECONCILIATION
-        // Periksa apakah instance sudah berhasil dibuat pada
-        // percobaan sebelumnya tetapi respons/update database gagal.
-        //
-        // Jika OCI listInstances gagal, error akan masuk outer catch.
-        // Worker TIDAK akan lanjut launch tanpa pemeriksaan yang berhasil.
-        const existingInstance = await findInstanceByProvisioningJobId(
-            job.id,
-            job.config
-        );
-
-        if (existingInstance) {
-            console.log("[WORKER] Existing instance found:", {
-                jobId: job.id,
-                instanceId: existingInstance.id,
-                lifecycleState: existingInstance.lifecycleState,
-            });
-
-            // 4. Instance sudah ditemukan, tandai job berhasil.
-            const updatedJob = await markProvisioningSucceeded(
-                job.id,
-                {
-                    instanceId: existingInstance.id,
-                    instanceState: existingInstance.lifecycleState,
-                },
-                workerId
-            );
-
-            if (!updatedJob) {
-                throw new Error(
-                    `Unable to reconcile job ${job.id}. ` +
-                    `Instance ${existingInstance.id} exists, ` +
-                    `but database update failed or worker lock expired.`
-                );
-            }
-
-            return res.status(200).json({
-                success: true,
-                processed: 1,
-                jobId: job.id,
-                status: "SUCCEEDED",
-                reconciled: true,
-                instance: existingInstance,
-            });
-        }
-
-        console.log(
-            "[WORKER] No existing instance found. Launching VPS:",
-            job.id
-        );
-
-        // 5. Launch OCI.
-        // Job ID dipasang sebagai freeformTag.
-        // Retry token tetap menggunakan token yang sama.
-        let instance;
+        // STEP 1: Reconcile with OCI before attempting another launch.
+        let existingInstance;
 
         try {
-            instance = await launchVps(
-                job.retry_token,
+            existingInstance = await findInstanceByProvisioningJobId(
+                job.id,
                 job.config,
-                job.id
             );
         } catch (error) {
-            console.error("[WORKER] OCI launch failed:", {
+            console.error("[WORKER] OCI reconciliation failed:", {
                 jobId: job.id,
-                attempt: job.attempt_count,
-                errorCode:
-                    error?.code ??
-                    error?.serviceCode ??
-                    "UNKNOWN_ERROR",
-                message: error?.message,
+                errorCode: error.code ?? error.serviceCode ?? "UNKNOWN",
+                errorMessage: error.message,
             });
 
-            // 6. Proses retry atau terminal failure.
-            const result = await handleProvisioningFailure(
-                job,
-                error,
-                { workerId }
-            );
-
-            console.log("[WORKER] Failure handled:", {
-                jobId: job.id,
-                status: result.status,
-                retryScheduled: result.retryScheduled,
-                nextRetryAt: result.nextRetryAt ?? null,
-                reason: result.reason ?? null,
-            });
-
-            return res.status(200).json({
-                success: true,
-                processed: 1,
-                jobId: job.id,
-                status: result.status,
-                retryScheduled: result.retryScheduled,
-                nextRetryAt: result.nextRetryAt ?? null,
-                reason: result.reason ?? null,
-            });
+            // Do not launch if OCI state cannot be checked.
+            // The DB lock will expire and a later worker can retry.
+            throw error;
         }
 
-        // 7. Launch berhasil. Update database.
-        // Tidak masuk catch launch agar DB failure tidak dianggap
-        // sebagai kegagalan request OCI.
+        let instance;
+        let reconciled = false;
+
+        if (existingInstance) {
+            instance = existingInstance;
+            reconciled = true;
+
+            console.log("[WORKER] Existing instance reconciled:", {
+                jobId: job.id,
+                instanceId: instance.id,
+                lifecycleState: instance.lifecycleState,
+            });
+        } else {
+            // STEP 2: No matching instance; submit launch request.
+            console.log("[WORKER] No matching instance. Launching:", {
+                jobId: job.id,
+            });
+
+            try {
+                instance = await launchVps(
+                    job.retry_token,
+                    job.config,
+                    job.id,
+                );
+            } catch (error) {
+                console.error("[WORKER] OCI launch failed:", {
+                    jobId: job.id,
+                    errorCode: error.code ?? error.serviceCode ?? "UNKNOWN",
+                    errorMessage: error.message,
+                });
+
+                const result = await handleProvisioningFailure(
+                    job,
+                    error,
+                    { workerId },
+                );
+
+                if (result.status === "FAILED") {
+                    notifyProvisioningFailure(job, result).catch((err) =>
+                        console.error("[WORKER] Failed to notify failure:", err.message)
+                    );
+                }
+
+                return res.status(200).json({
+                    success: true,
+                    processed: 1,
+                    jobId: job.id,
+                    status: result.status,
+                    retryScheduled: result.retryScheduled,
+                    nextRetryAt: result.nextRetryAt ?? null,
+                    reason: result.reason ?? null,
+                });
+            }
+        }
+
+        // STEP 3: Persist the instance result.
         const updatedJob = await markProvisioningSucceeded(
             job.id,
             {
                 instanceId: instance.id,
                 instanceState: instance.lifecycleState,
+                publicIp: instance.publicIp || null,
             },
-            workerId
+            workerId,
         );
 
         if (!updatedJob) {
             throw new Error(
-                `OCI instance ${instance.id} was created, ` +
-                `but provisioning job ${job.id} could not be updated. ` +
-                `Worker lock may have expired.`
+                `Job ${job.id} no longer belongs to worker ${workerId}`,
             );
         }
 
@@ -192,28 +174,32 @@ export default async function handler(req, res) {
             jobId: job.id,
             instanceId: instance.id,
             lifecycleState: instance.lifecycleState,
+            reconciled,
         });
+
+        // Send idempotent Telegram success notification to the user
+        notifyProvisioningSuccess(job, instance).catch((err) =>
+            console.error("[WORKER] Failed to send success notification:", err.message)
+        );
 
         return res.status(200).json({
             success: true,
             processed: 1,
             jobId: job.id,
             status: "SUCCEEDED",
-            reconciled: false,
+            reconciled,
             instance,
         });
     } catch (error) {
         console.error("[WORKER ERROR]", {
-            workerId,
-            message: error?.message,
-            stack: error?.stack,
+            message: error.message,
+            code: error.code ?? error.serviceCode ?? "UNKNOWN",
         });
 
         return res.status(500).json({
             success: false,
             message: "Worker execution failed",
-            error: error?.message ?? "Unknown worker error",
-            workerId,
+            error: error.message,
         });
     }
 }

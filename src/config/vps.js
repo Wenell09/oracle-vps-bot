@@ -7,7 +7,6 @@ export function getVpsConfig() {
         "OCI_IMAGE_OCID",
         "OCI_SUBNET_OCID",
         "OCI_SSH_PUBLIC_KEY",
-        "TELEGRAM_ADMIN_ID",
     ];
 
     const ociConfig = getOciConfig();
@@ -22,10 +21,15 @@ export function getVpsConfig() {
         );
     }
 
+    const adminId = process.env.TELEGRAM_ADMIN_ID?.trim() || process.env.ALLOWED_TELEGRAM_USER_ID?.trim();
+    if (!adminId) {
+        throw new Error("TELEGRAM_ADMIN_ID or ALLOWED_TELEGRAM_USER_ID must be configured.");
+    }
+
     const sshPublicKey = process.env.OCI_SSH_PUBLIC_KEY.trim();
 
-    if (!sshPublicKey.startsWith("ssh-ed25519 ")) {
-        throw new Error("OCI_SSH_PUBLIC_KEY harus berupa ED25519 public key.");
+    if (!sshPublicKey.startsWith("ssh-ed25519 ") && !sshPublicKey.startsWith("ssh-rsa ")) {
+        throw new Error("OCI_SSH_PUBLIC_KEY harus berupa valid public key (ssh-ed25519 atau ssh-rsa).");
     }
 
     return {
@@ -42,5 +46,6 @@ export function getVpsConfig() {
         ocpus: 1,
         memoryInGBs: 6,
         bootVolumeSizeInGBs: 50,
+        adminId,
     };
 }

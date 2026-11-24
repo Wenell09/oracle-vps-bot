@@ -1,30 +1,32 @@
 export async function startCommand(ctx) {
     const message = `
-Welcome to Oracle VPS Bot!
+🤖 *Selamat datang di Oracle VPS Bot!*
 
-Bot ini membantu mengelola provisioning
-Oracle Cloud Infrastructure.
+Bot ini membantu kamu membuat, memantau, dan mengelola VPS Oracle Cloud Infrastructure (OCI) secara otomatis dan andal.
 
-Available commands:
+📌 *Perintah Utama:*
+• /create - Buat VPS baru
+• /status - Cek status real-time & kelola VPS
+• /list   - Daftar semua VPS kamu
+• /delete - Hapus (terminate) VPS dengan konfirmasi
 
-/start - Start bot
-/help  - Show help
-/ping  - Check bot status
-/id    - Show Telegram user ID
-/oci_test    - test connection OCI
-/list_vps    - List OCI instances
-/list_shapes    - List available VM shapes
-/list_images    - List available OS images
-/list_vcns    - List OCI virtual cloud networks
-/list_subnets    - List OCI subnets
-/network_check    - Check OCI network readiness
-/quota_check - check compute quota
-/launch_vps - Create VPS
-/retry_status - Show latest provisioning status
-/retry_list - List active provisioning jobs
-/cancel_retry - Cancel a provisioning retry
+🔍 *Diagnostik & OCI:*
+• /oci_test       - Uji koneksi ke Oracle Cloud
+• /list_shapes    - Daftar VM shapes yang tersedia
+• /list_images    - Daftar OS images
+• /network_check  - Periksa kesiapan VCN & Subnet
+• /quota_check    - Periksa kuota compute
 
+🔄 *Retry & Provisioning:*
+• /retry_status   - Status provisioning job terakhir
+• /retry_list     - Daftar job provisioning aktif
+• /cancel_retry   - Batalkan antrean retry
+
+ℹ️ *Lainnya:*
+• /help - Tampilkan bantuan
+• /ping - Periksa koneksi bot
+• /id   - Tampilkan ID Telegram kamu
 `;
 
-    await ctx.reply(message);
+    await ctx.reply(message, { parse_mode: "Markdown" });
 }

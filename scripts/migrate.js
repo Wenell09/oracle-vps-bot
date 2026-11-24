@@ -9,60 +9,70 @@ import { db } from "../src/config/database.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const migrationName = "001_create_provisioning_jobs";
-
-async function migrate() {
+export async function runMigrations() {
     const client = await db.connect();
 
     try {
         await client.query("BEGIN");
 
         await client.query(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        id SERIAL PRIMARY KEY,
-        migration_name VARCHAR(255) NOT NULL UNIQUE,
-        executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `);
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                id SERIAL PRIMARY KEY,
+                migration_name VARCHAR(255) NOT NULL UNIQUE,
+                executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        `);
 
-        const existing = await client.query(
-            `SELECT id FROM schema_migrations WHERE migration_name = $1`,
-            [migrationName]
-        );
+        const migrationsDir = path.join(__dirname, "../src/database/migrations");
+        const files = await fs.readdir(migrationsDir);
+        const sqlFiles = files
+            .filter((file) => file.endsWith(".sql"))
+            .sort();
 
-        if (existing.rowCount > 0) {
-            console.log(`[MIGRATION] Already executed: ${migrationName}`);
-            await client.query("COMMIT");
-            return;
+        for (const file of sqlFiles) {
+            const migrationName = path.basename(file, ".sql");
+
+            const existing = await client.query(
+                `SELECT id FROM schema_migrations WHERE migration_name = $1`,
+                [migrationName]
+            );
+
+            if (existing.rowCount > 0) {
+                console.log(`[MIGRATION] Already executed: ${migrationName}`);
+                continue;
+            }
+
+            console.log(`[MIGRATION] Executing: ${migrationName}...`);
+            const filePath = path.join(migrationsDir, file);
+            const sql = await fs.readFile(filePath, "utf8");
+
+            await client.query(sql);
+
+            await client.query(
+                `INSERT INTO schema_migrations (migration_name) VALUES ($1)`,
+                [migrationName]
+            );
+
+            console.log(`[MIGRATION] Successfully executed: ${migrationName}`);
         }
 
-        const migrationPath = path.join(
-            __dirname,
-            "../src/database/migrations/001_create_provisioning_jobs.sql"
-        );
-
-        const sql = await fs.readFile(migrationPath, "utf8");
-
-        await client.query(sql);
-
-        await client.query(
-            `INSERT INTO schema_migrations (migration_name) VALUES ($1)`,
-            [migrationName]
-        );
-
         await client.query("COMMIT");
-
-        console.log(`[MIGRATION] Successfully executed: ${migrationName}`);
+        console.log("[MIGRATION] All migrations applied successfully.");
     } catch (error) {
         await client.query("ROLLBACK");
         throw error;
     } finally {
         client.release();
-        await db.end();
     }
 }
 
-migrate().catch((error) => {
-    console.error("[MIGRATION] Failed:", error.message);
-    process.exitCode = 1;
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+    runMigrations()
+        .then(() => db.end())
+        .catch((error) => {
+            console.error("[MIGRATION] Failed:", error.message);
+            db.end().finally(() => {
+                process.exit(1);
+            });
+        });
+}

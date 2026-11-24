@@ -29,6 +29,10 @@ export function createIdentityClient() {
 }
 
 export function createComputeClient() {
+    if (globalThis.__ociComputeClientMock) {
+        return globalThis.__ociComputeClientMock;
+    }
+
     const config = getOciConfig();
     const authenticationProvider = createOciAuthenticationProvider(config);
 
