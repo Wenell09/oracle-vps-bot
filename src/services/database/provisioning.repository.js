@@ -1,31 +1,7 @@
 import { db } from "../../config/database.js";
 
 export const WORKER_LOCK_MINUTES = 10;
-
-/**
- * Memulai percobaan provisioning pertama dari bot interaction.
- *
- * Job berstatus PENDING dengan attempt_count = 0 berpindah ke PROCESSING.
- */
-export async function startInitialProvisioningAttempt(id) {
-    const query = `
-        UPDATE provisioning_jobs
-        SET
-            status = 'PROCESSING',
-            attempt_count = attempt_count + 1,
-            last_attempt_at = NOW(),
-            locked_until = NOW() + ($2 * INTERVAL '1 minute'),
-            updated_at = NOW()
-        WHERE id = $1
-            AND status = 'PENDING'
-            AND attempt_count = 0
-            AND locked_by IS NULL
-        RETURNING *
-    `;
-
-    const result = await db.query(query, [id, WORKER_LOCK_MINUTES]);
-    return result.rows[0] ?? null;
-}
+export const NOTIFICATION_LOCK_MINUTES = 10;
 
 /**
  * Membuat provisioning job baru.
@@ -135,7 +111,8 @@ export async function findActiveProvisioningJob(telegramUserId) {
 }
 
 /**
- * Mengambil job terbaru milik user, termasuk job yang sudah selesai.
+ * Mengambil job terbaru milik user,
+ * termasuk job yang sudah selesai.
  */
 export async function findLatestProvisioningJob(telegramUserId) {
     const query = `
@@ -166,7 +143,13 @@ export async function findLatestProvisioningJob(telegramUserId) {
     return result.rows[0] ?? null;
 }
 
-export async function listProvisioningJobsByUser(telegramUserId, limit = 20) {
+/**
+ * Mengambil seluruh provisioning job milik user.
+ */
+export async function listProvisioningJobsByUser(
+    telegramUserId,
+    limit = 20
+) {
     const query = `
         SELECT *
         FROM provisioning_jobs
@@ -180,12 +163,12 @@ export async function listProvisioningJobsByUser(telegramUserId, limit = 20) {
 }
 
 /**
- * Mengambil job retry yang sudah waktunya diproses atau job pending/stuck.
+ * Mengambil job yang sudah waktunya diproses.
  *
  * FOR UPDATE SKIP LOCKED mencegah beberapa worker
  * mengambil job yang sama secara bersamaan.
  *
- * Job dikunci selama WORKER_LOCK_MINUTES dan status diset ke PROCESSING.
+ * Job akan dikunci selama WORKER_LOCK_MINUTES.
  */
 export async function claimDueProvisioningJobs(workerId, limit = 1) {
     if (!workerId) {
@@ -201,12 +184,27 @@ export async function claimDueProvisioningJobs(workerId, limit = 1) {
             SELECT id
             FROM provisioning_jobs
             WHERE (
-                -- RETRYING job yang sudah jatuh tempo
-                (status = 'RETRYING' AND (next_retry_at IS NULL OR next_retry_at <= NOW()))
-                -- PENDING job yang belum diambil worker
-                OR (status = 'PENDING' AND (locked_until IS NULL OR locked_until < NOW()))
-                -- PROCESSING job yang lock-nya expired (stuck job recovery)
-                OR (status = 'PROCESSING' AND (locked_until IS NULL OR locked_until < NOW()))
+                (
+                    status = 'RETRYING'
+                    AND (
+                        next_retry_at IS NULL
+                        OR next_retry_at <= NOW()
+                    )
+                )
+                OR (
+                    status = 'PENDING'
+                    AND (
+                        locked_until IS NULL
+                        OR locked_until < NOW()
+                    )
+                )
+                OR (
+                    status = 'PROCESSING'
+                    AND (
+                        locked_until IS NULL
+                        OR locked_until < NOW()
+                    )
+                )
             )
             AND (
                 locked_until IS NULL
@@ -214,7 +212,10 @@ export async function claimDueProvisioningJobs(workerId, limit = 1) {
             )
             AND attempt_count < max_attempts
             ORDER BY
-                CASE WHEN status = 'RETRYING' THEN 1 ELSE 0 END ASC,
+                CASE
+                    WHEN status = 'RETRYING' THEN 1
+                    ELSE 0
+                END ASC,
                 next_retry_at ASC NULLS FIRST,
                 created_at ASC
             LIMIT $2
@@ -243,11 +244,46 @@ export async function claimDueProvisioningJobs(workerId, limit = 1) {
 }
 
 /**
- * Menandai job RETRYING atau PROCESSING yang sudah mencapai batas percobaan
- * tetapi tidak lagi memiliki worker aktif sebagai FAILED.
+ * Memperpanjang worker lock selama provisioning masih berjalan.
  *
- * Mencegah job tertahan selamanya jika worker crash
- * setelah mengambil percobaan terakhir.
+ * Hanya worker pemilik lock aktif yang dapat memperpanjangnya.
+ *
+ * PENTING:
+ * Fungsi ini harus dipanggil secara berkala oleh worker
+ * selama proses OCI berlangsung.
+ */
+export async function renewProvisioningJobLock(id, workerId) {
+    if (!id || !workerId) {
+        throw new Error("Job ID dan worker ID wajib diisi.");
+    }
+
+    const query = `
+        UPDATE provisioning_jobs
+        SET
+            locked_until = NOW() + ($3 * INTERVAL '1 minute'),
+            updated_at = NOW()
+        WHERE id = $1
+            AND status = 'PROCESSING'
+            AND locked_by = $2
+            AND locked_until > NOW()
+        RETURNING *
+    `;
+
+    const result = await db.query(query, [
+        id,
+        workerId,
+        WORKER_LOCK_MINUTES,
+    ]);
+
+    return result.rows[0] ?? null;
+}
+
+/**
+ * Menandai job yang sudah mencapai batas percobaan
+ * dan tidak lagi memiliki worker aktif sebagai FAILED.
+ *
+ * Mengembalikan seluruh row agar dapat digunakan
+ * untuk proses notifikasi kegagalan.
  */
 export async function failExhaustedProvisioningJobs() {
     const query = `
@@ -278,7 +314,7 @@ export async function failExhaustedProvisioningJobs() {
  * Menjadwalkan retry berikutnya.
  *
  * Jika dipanggil oleh worker, worker harus masih memiliki lock aktif.
- * Jika dipanggil oleh proses awal, locked_by harus NULL.
+ * Jika dipanggil tanpa workerId, job tidak boleh memiliki lock aktif.
  */
 export async function scheduleProvisioningRetry(
     id,
@@ -304,7 +340,10 @@ export async function scheduleProvisioningRetry(
             AND (
                 (
                     $5::VARCHAR IS NULL
-                    AND (locked_by IS NULL OR locked_until <= NOW())
+                    AND (
+                        locked_by IS NULL
+                        OR locked_until <= NOW()
+                    )
                 )
                 OR (
                     $5::VARCHAR IS NOT NULL
@@ -358,7 +397,10 @@ export async function markProvisioningSucceeded(
             AND (
                 (
                     $4::VARCHAR IS NULL
-                    AND (locked_by IS NULL OR locked_until <= NOW())
+                    AND (
+                        locked_by IS NULL
+                        OR locked_until <= NOW()
+                    )
                 )
                 OR (
                     $4::VARCHAR IS NOT NULL
@@ -408,7 +450,10 @@ export async function markProvisioningFailed(
             AND (
                 (
                     $4::VARCHAR IS NULL
-                    AND (locked_by IS NULL OR locked_until <= NOW())
+                    AND (
+                        locked_by IS NULL
+                        OR locked_until <= NOW()
+                    )
                 )
                 OR (
                     $4::VARCHAR IS NOT NULL
@@ -448,7 +493,10 @@ export async function cancelProvisioningJob(id, telegramUserId) {
         WHERE id = $1
             AND telegram_user_id = $2
             AND status IN ('PENDING', 'RETRYING')
-            AND (locked_by IS NULL OR locked_until < NOW())
+            AND (
+                locked_by IS NULL
+                OR locked_until < NOW()
+            )
         RETURNING *
     `;
 
@@ -472,8 +520,10 @@ export async function claimJobNotification(id, workerId) {
         UPDATE provisioning_jobs
         SET
             notification_locked_by = $2,
-            notification_locked_until = NOW() + INTERVAL '10 minutes',
-            notification_attempt_count = notification_attempt_count + 1,
+            notification_locked_until =
+                NOW() + ($3 * INTERVAL '1 minute'),
+            notification_attempt_count =
+                notification_attempt_count + 1,
             updated_at = NOW()
         WHERE id = $1
             AND status IN ('SUCCEEDED', 'FAILED')
@@ -485,13 +535,17 @@ export async function claimJobNotification(id, workerId) {
         RETURNING *
     `;
 
-    const result = await db.query(query, [id, workerId]);
+    const result = await db.query(query, [
+        id,
+        workerId,
+        NOTIFICATION_LOCK_MINUTES,
+    ]);
 
     return result.rows[0] ?? null;
 }
 
 /**
- * Tandai notifikasi berhasil setelah Telegram menerima pesan.
+ * Menandai notifikasi berhasil setelah Telegram menerima pesan.
  */
 export async function markJobNotified(id, workerId) {
     const query = `
@@ -510,12 +564,11 @@ export async function markJobNotified(id, workerId) {
     `;
 
     const result = await db.query(query, [id, workerId]);
-
     return result.rows[0] ?? null;
 }
 
 /**
- * Melepaskan lock jika pengiriman notifikasi gagal.
+ * Melepaskan notification lock jika pengiriman gagal.
  */
 export async function releaseJobNotification(
     id,
@@ -538,7 +591,10 @@ export async function releaseJobNotification(
     const result = await db.query(query, [
         id,
         workerId,
-        String(errorMessage || "Notification delivery failed").slice(0, 2000),
+        String(errorMessage || "Notification delivery failed").slice(
+            0,
+            2000
+        ),
     ]);
 
     return result.rows[0] ?? null;
@@ -548,6 +604,10 @@ export async function releaseJobNotification(
  * Mengambil kandidat job yang notifikasinya belum terkirim.
  */
 export async function findUnnotifiedJobs(limit = 10) {
+    if (!Number.isInteger(limit) || limit < 1) {
+        throw new Error("Notification limit harus berupa integer positif.");
+    }
+
     const query = `
         SELECT *
         FROM provisioning_jobs
@@ -557,19 +617,26 @@ export async function findUnnotifiedJobs(limit = 10) {
                 notification_locked_until IS NULL
                 OR notification_locked_until <= NOW()
             )
-        ORDER BY completed_at ASC NULLS FIRST, created_at ASC
+        ORDER BY
+            completed_at ASC NULLS FIRST,
+            created_at ASC
         LIMIT $1
     `;
 
     const result = await db.query(query, [limit]);
-
     return result.rows;
 }
 
 /**
- * Perbarui instance state dan public IP dari OCI sync.
+ * Memperbarui instance state dan public IP dari OCI sync.
  */
-export async function updateInstanceState(instanceId, { instanceState, publicIp = null }) {
+export async function updateInstanceState(
+    instanceId,
+    {
+        instanceState,
+        publicIp = null,
+    }
+) {
     const query = `
         UPDATE provisioning_jobs
         SET
@@ -580,15 +647,28 @@ export async function updateInstanceState(instanceId, { instanceState, publicIp 
         RETURNING *
     `;
 
-    const result = await db.query(query, [instanceId, instanceState, publicIp]);
+    const result = await db.query(query, [
+        instanceId,
+        instanceState,
+        publicIp,
+    ]);
+
     return result.rows[0] ?? null;
 }
 
 /**
- * Catat update Telegram untuk deduplikasi webhook.
- * Returns true jika update baru, false jika duplicate.
+ * Mencatat update Telegram untuk deduplikasi webhook.
+ *
+ * Returns true jika update baru.
+ * Returns false jika update sudah pernah diproses.
+ *
+ * Jika database gagal, error diteruskan ke pemanggil.
  */
 export async function recordTelegramUpdate(updateId) {
+    if (updateId === undefined || updateId === null) {
+        throw new Error("Telegram update ID wajib diisi.");
+    }
+
     const query = `
         INSERT INTO telegram_processed_updates (update_id)
         VALUES ($1)
@@ -596,12 +676,7 @@ export async function recordTelegramUpdate(updateId) {
         RETURNING update_id
     `;
 
-    try {
-        const result = await db.query(query, [updateId]);
-        return Boolean(result.rows[0]);
-    } catch (error) {
-        // Jika tabel belum ada atau DB issue, fallback gracefully agar tidak memblokir bot
-        console.error("[DATABASE] Error recording telegram update:", error.message);
-        return true;
-    }
+    const result = await db.query(query, [updateId]);
+
+    return Boolean(result.rows[0]);
 }
