@@ -267,7 +267,7 @@ export async function failExhaustedProvisioningJobs() {
                 locked_until IS NULL
                 OR locked_until < NOW()
             )
-        RETURNING id, telegram_user_id, telegram_chat_id, display_name
+        RETURNING *
     `;
 
     const result = await db.query(query);
@@ -461,37 +461,108 @@ export async function cancelProvisioningJob(id, telegramUserId) {
 }
 
 /**
- * Tandai bahwa notifikasi Telegram sudah dikirim ke user secara idempoten.
+ * Mengambil lock pengiriman notifikasi secara atomik.
  */
-export async function markJobNotified(id) {
+export async function claimJobNotification(id, workerId) {
+    if (!id || !workerId) {
+        throw new Error("Job ID dan worker ID wajib diisi.");
+    }
+
     const query = `
         UPDATE provisioning_jobs
         SET
-            notified_at = NOW(),
+            notification_locked_by = $2,
+            notification_locked_until = NOW() + INTERVAL '10 minutes',
+            notification_attempt_count = notification_attempt_count + 1,
             updated_at = NOW()
         WHERE id = $1
+            AND status IN ('SUCCEEDED', 'FAILED')
             AND notified_at IS NULL
+            AND (
+                notification_locked_until IS NULL
+                OR notification_locked_until <= NOW()
+            )
         RETURNING *
     `;
 
-    const result = await db.query(query, [id]);
+    const result = await db.query(query, [id, workerId]);
+
     return result.rows[0] ?? null;
 }
 
 /**
- * Cari job sukses yang belum dikirimi notifikasi (recovery).
+ * Tandai notifikasi berhasil setelah Telegram menerima pesan.
  */
-export async function findUnnotifiedSucceededJobs(limit = 10) {
+export async function markJobNotified(id, workerId) {
+    const query = `
+        UPDATE provisioning_jobs
+        SET
+            notified_at = NOW(),
+            notification_locked_by = NULL,
+            notification_locked_until = NULL,
+            notification_last_error = NULL,
+            updated_at = NOW()
+        WHERE id = $1
+            AND notified_at IS NULL
+            AND notification_locked_by = $2
+            AND notification_locked_until > NOW()
+        RETURNING *
+    `;
+
+    const result = await db.query(query, [id, workerId]);
+
+    return result.rows[0] ?? null;
+}
+
+/**
+ * Melepaskan lock jika pengiriman notifikasi gagal.
+ */
+export async function releaseJobNotification(
+    id,
+    workerId,
+    errorMessage
+) {
+    const query = `
+        UPDATE provisioning_jobs
+        SET
+            notification_locked_by = NULL,
+            notification_locked_until = NULL,
+            notification_last_error = $3,
+            updated_at = NOW()
+        WHERE id = $1
+            AND notified_at IS NULL
+            AND notification_locked_by = $2
+        RETURNING *
+    `;
+
+    const result = await db.query(query, [
+        id,
+        workerId,
+        String(errorMessage || "Notification delivery failed").slice(0, 2000),
+    ]);
+
+    return result.rows[0] ?? null;
+}
+
+/**
+ * Mengambil kandidat job yang notifikasinya belum terkirim.
+ */
+export async function findUnnotifiedJobs(limit = 10) {
     const query = `
         SELECT *
         FROM provisioning_jobs
-        WHERE status = 'SUCCEEDED'
+        WHERE status IN ('SUCCEEDED', 'FAILED')
             AND notified_at IS NULL
-        ORDER BY completed_at ASC
+            AND (
+                notification_locked_until IS NULL
+                OR notification_locked_until <= NOW()
+            )
+        ORDER BY completed_at ASC NULLS FIRST, created_at ASC
         LIMIT $1
     `;
 
     const result = await db.query(query, [limit]);
+
     return result.rows;
 }
 
