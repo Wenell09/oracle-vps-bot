@@ -2,6 +2,8 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { notifyProvisioningSuccess, notifyProvisioningFailure } from "../../src/services/telegram/notification.service.js";
 import { recordTelegramUpdate } from "../../src/services/database/provisioning.repository.js";
+import { helpCommand } from "../../src/commands/help.js";
+import { startCommand } from "../../src/commands/start.js";
 import { bot } from "../../src/bot.js";
 import { db } from "../../src/config/database.js";
 
@@ -142,5 +144,53 @@ describe("Telegram Integration & Reliability Tests", () => {
         const second = await notifyProvisioningSuccess(job);
         assert.equal(second, false);
         assert.equal(sentMessages.length, 1, "Must not send duplicate notification message");
+    });
+
+    it("should respond to /help with valid HTML and complete command list without throwing parse errors", async () => {
+        let replyCalled = false;
+        let replyText = "";
+        let replyOptions = null;
+
+        const mockCtx = {
+            reply: async (text, options) => {
+                replyCalled = true;
+                replyText = text;
+                replyOptions = options;
+            },
+        };
+
+        await helpCommand(mockCtx);
+
+        assert.equal(replyCalled, true);
+        assert.equal(replyOptions?.parse_mode, "HTML");
+        assert.equal(replyText.includes("PANDUAN PERINTAH BOT"), true);
+        assert.equal(replyText.includes("/create"), true);
+        assert.equal(replyText.includes("/status"), true);
+        assert.equal(replyText.includes("/list"), true);
+        assert.equal(replyText.includes("/delete"), true);
+        assert.equal(replyText.includes("/oci_test"), true);
+        assert.equal(replyText.includes("/list_shapes"), true);
+    });
+
+    it("should respond to /start with valid HTML and guidance without throwing parse errors", async () => {
+        let replyCalled = false;
+        let replyText = "";
+        let replyOptions = null;
+
+        const mockCtx = {
+            reply: async (text, options) => {
+                replyCalled = true;
+                replyText = text;
+                replyOptions = options;
+            },
+        };
+
+        await startCommand(mockCtx);
+
+        assert.equal(replyCalled, true);
+        assert.equal(replyOptions?.parse_mode, "HTML");
+        assert.equal(replyText.includes("Selamat datang di Oracle VPS Bot"), true);
+        assert.equal(replyText.includes("/create"), true);
+        assert.equal(replyText.includes("/status"), true);
     });
 });

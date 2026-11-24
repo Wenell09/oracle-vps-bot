@@ -1,33 +1,34 @@
 export async function helpCommand(ctx) {
     const message = `
-📖 *PANDUAN PERINTAH BOT:*
+📖 <b>PANDUAN PERINTAH BOT</b>
 
-*Manajemen VPS:*
+<b>Manajemen VPS:</b>
 • /create - Mulai konfigurasi dan buat VPS baru
 • /status - Lihat status real-time VPS aktif (Start/Stop/Restart)
-• /list   - Tampilkan semua instance VPS milik kamu
+• /list - Tampilkan semua instance VPS milik kamu
 • /delete - Hapus instance VPS (dengan konfirmasi keamanan)
 
-*Diagnostik OCI:*
-• /oci_test      - Uji koneksi & autentikasi OCI
-• /list_vps      - Ambil daftar mentah instance OCI dari compartment
-• /list_shapes   - Lihat daftar shapes compute
-• /list_images   - Lihat daftar OS images
-• /list_vcns     - Lihat Virtual Cloud Networks
-• /list_subnets  - Lihat Subnets
+<b>Diagnostik OCI:</b>
+• /oci_test - Uji koneksi & autentikasi OCI
+• /list_vps - Ambil daftar mentah instance OCI dari compartment
+• /list_shapes - Lihat daftar shapes compute
+• /list_images - Lihat daftar OS images
+• /list_vcns - Lihat Virtual Cloud Networks
+• /list_subnets - Lihat Subnets
 • /network_check - Audit kesiapan network OCI (Gateway, Route, SSH)
-• /quota_check   - Periksa limit kuota OCI
+• /quota_check - Periksa limit kuota OCI
 
-*Antrean & Retry:*
+<b>Antrean & Retry:</b>
 • /retry_status - Cek status job antrean provisioning
-• /retry_list   - Lihat semua job yang sedang antre/retry
+• /retry_list - Lihat semua job yang sedang antre/retry
 • /cancel_retry - Batalkan job yang belum dieksekusi worker
 
-*Utilitas:*
+<b>Utilitas:</b>
 • /start - Menu utama
-• /ping  - Periksa ketersediaan bot
-• /id    - Dapatkan ID Telegram kamu
-`;
+• /help - Tampilkan bantuan ini
+• /ping - Periksa ketersediaan bot
+• /id - Dapatkan ID Telegram kamu
+`.trim();
 
-    await ctx.reply(message, { parse_mode: "Markdown" });
+    await ctx.reply(message, { parse_mode: "HTML" });
 }
