@@ -223,38 +223,40 @@ npm run webhook:delete
 
 ---
 
-## 10. Arsitektur Worker & Vercel Cron
+## 10. Arsitektur Worker & External Cron Scheduler (cron-job.org)
 
-### Penjadwalan Vercel Cron
-File `vercel.json` dikonfigurasi sebagai berikut:
-```json
-{
-  "version": 2,
-  "crons": [
-    {
-      "path": "/api/cron",
-      "schedule": "* * * * *"
-    }
-  ],
-  "functions": {
-    "api/bot.js": { "maxDuration": 15 },
-    "api/worker.js": { "maxDuration": 60 },
-    "api/cron.js": { "maxDuration": 60 }
-  }
-}
+### Mengapa Menggunakan External Scheduler?
+Pada paket **Vercel Hobby (Gratis)**, fitur Vercel Cron dibatasi maksimal **1 kali eksekusi per hari**. Padahal proses provisioning OCI Always Free membutuhkan pengecekan dan retry antrean berkala (misal setiap 5 menit).
+
+Oleh karena itu, dependency Vercel Cron dihapus dari `vercel.json` dan digantikan dengan dedicated endpoint untuk external cron:
+```
+GET https://oracle-vps-bot.vercel.app/api/cron/worker
 ```
 
-> **Catatan Batasan Paket Vercel:**
-> - **Vercel Pro:** Mendukung eksekusi cron setiap menit (`* * * * *`) dengan durasi fungsi hingga 60-300 detik.
-> - **Vercel Hobby (Gratis):** Vercel membatasi eksekusi cron maksimal 1 kali per hari (misal `0 0 * * *`). Jika menggunakan akun Hobby, pertimbangkan pemanggilan eksternal berkala (seperti GitHub Actions scheduled workflow atau cron-job.org) yang mengirim HTTP POST ke `https://<app>.vercel.app/api/worker` dengan header `Authorization: Bearer <WORKER_SECRET>`.
+### Konfigurasi di cron-job.org (Gratis & Mudah)
+1. Daftar atau login di [cron-job.org](https://cron-job.org).
+2. Klik **Create Cronjob**.
+3. Atur parameter berikut:
+   - **Title:** `Oracle VPS Worker Scheduler`
+   - **URL:** `https://<your-app-domain>.vercel.app/api/cron/worker` (sesuaikan dengan domain Vercel kamu)
+   - **Execution Schedule:** Every 5 minutes (`*/5 * * * *`)
+   - **HTTP Method:** `GET`
+4. Buka tab **Advanced** > **Headers**:
+   - Tambahkan request header:
+     - **Key:** `Authorization`
+     - **Value:** `Bearer <CRON_SECRET>` (sesuaikan dengan nilai `CRON_SECRET` di Vercel Environment Variables)
+5. Simpan (Save). Cron-job.org akan secara otomatis memicu antrean worker setiap 5 menit.
 
-### Eksekusi Worker
-1. `/api/cron` menerima HTTP `GET` dari Vercel Cron dengan header `Authorization: Bearer <CRON_SECRET>`.
-2. `/api/cron` memanggil `/api/worker` via HTTP `POST` dengan header `Authorization: Bearer <WORKER_SECRET>`.
-3. Worker mengeksekusi:
+### Eksekusi & Keamanan Endpoint `/api/cron/worker`
+1. Endpoint menerima HTTP `GET` dari scheduler eksternal dengan header `Authorization: Bearer <CRON_SECRET>`.
+2. Menolak request jika secret dikirim di URL query parameters (`?secret=...`).
+3. Memanggil `/api/worker` via HTTP `POST` internal dengan header `Authorization: Bearer <WORKER_SECRET>`.
+4. Memiliki fallback eksekusi in-process jika container serverless memblokir network loopback internal.
+5. Menjaga otentikasi internal worker (`WORKER_SECRET`) tetap terisolasi dan tidak terekspos ke publik.
+6. Worker mengeksekusi:
    - `failExhaustedProvisioningJobs()`: Menandai job yang attempt-nya habis dan lock-nya expired sebagai `FAILED`.
    - `claimDueProvisioningJobs()`: Mengunci 1 job yang jatuh tempo menggunakan `FOR UPDATE SKIP LOCKED`.
-   - Rekonsiliasi OCI: Memeriksa apakah instance sudah pernah dibuat sebelumnya.
+   - Rekonsiliasi OCI: Memeriksa apakah instance sudah pernah dibuat sebelumnya melalui tag `freeformTags.provisioningJobId`.
    - Launching OCI: Meluncurkan instance menggunakan `retry_token` jika belum ada.
    - Persistence & Notifikasi: Menandai `SUCCEEDED` dan mengirim rincian VPS ke pengguna secara idempoten.
 
